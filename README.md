@@ -2,19 +2,22 @@
 
 Converts ics links to newline-delimited json for upload into an analytics database.
 
+## Install
+
+1. `git clone` and `cd` into this repo
+2. `pip install -r requirements.txt`
+
 ## Usage
 
 ### BigQuery
 
-1. In Google Calendar, go to the "Calendar settings" and copy the "Secret address in iCal format"
+1. Follow [Google's instructions](https://support.google.com/calendar/answer/37648?hl=en) for "See your calendar (view only)". If you're not able to do this and want this as a features, ping me [@ehfeng](https://twitter.com/ehfeng)
 2. `python main.py --calendar-url <GOOGLE CALENDAR SECRET ICAL URL> --json`
 3. Upload `calendar_events.json` as a table in BigQuery
 
 ## Notes
 
-Does not support endlessly recurring events. Recurring events are represented as separate events for simplicity when querying.
-
-Outputs `calendar_events.csv` or `calendar_events.json`
+Only generates up to `now` for infintely recurring events. All recurring events are represented as separate events for simplicity when querying.
 
 ```yaml
 columns:
