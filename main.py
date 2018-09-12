@@ -49,11 +49,14 @@ def convert(calendar_url, output_format):
     for component in calendar.subcomponents:
         attendees = []
         if component.get('attendee'):
-            for a in component['attendee']:
-                if isinstance(a, str):
-                    attendees.append(a)
-                else:
-                    attendees.append(i.to_ical().decode('utf-8'))
+            if isinstance(component['attendee'], str):
+                attendees = [component['attendee']]
+            else:
+                for a in component['attendee']:
+                    if isinstance(a, str):
+                        attendees.append(a)
+                    else:
+                        attendees.append(i.to_ical().decode('utf-8'))
 
         if component.name == 'VEVENT':
             event = {
