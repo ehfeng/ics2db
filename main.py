@@ -4,7 +4,11 @@ from datetime import datetime
 import json
 
 import click
-from dateutil.rrule import rrule, MONTHLY, WEEKLY, YEARLY, DAILY
+from dateutil.rrule import (
+    rrule,
+    MONTHLY, WEEKLY, YEARLY, DAILY,
+    MO, TU, WE, TH, FR, SA, SU,
+)
 from dateutil.parser import parse
 import requests
 from icalendar import Calendar, vDatetime
@@ -15,6 +19,16 @@ rrule_freq = {
     'MONTHLY': MONTHLY,
     'YEARLY': YEARLY,
     'DAILY': DAILY,
+}
+
+rrule_weekdays = {
+    'MO': MO,
+    'TU': TU,
+    'WE': WE,
+    'TH': TH,
+    'FR': FR,
+    'SA': SA,
+    'SU': SU,
 }
 
 class BigQueryEncoder(json.JSONEncoder):
@@ -33,23 +47,31 @@ def convert(calendar_url, output_format):
 
     calendar = Calendar.from_ical(requests.get(calendar_url).text)
     for component in calendar.subcomponents:
+        attendees = []
+        if component.get('attendee'):
+            for a in component['attendee']:
+                if isinstance(a, str):
+                    attendees.append(a)
+                else:
+                    attendees.append(i.to_ical().decode('utf-8'))
+
         if component.name == 'VEVENT':
             event = {
-                    'id': component['uid'],
-                    'name': component['summary'].to_ical().decode('utf-8'),
-                    'created': parse(component['created'].to_ical().decode('utf-8')),
-                    'description': component['description'].to_ical().decode('utf-8'),
-                    'start': parse(component['dtstart'].to_ical().decode('utf-8')),
-                    'end': parse(component['dtend'].to_ical().decode('utf-8')),
-                    'attendees': [i.to_ical().decode('utf-8') for i in component.get('attendee', [])],
+                'id': component['uid'],
+                'name': component['summary'].to_ical().decode('utf-8'),
+                'created': parse((component['created'] or component['dtstart']).to_ical().decode('utf-8')),
+                'description': component['description'].to_ical().decode('utf-8') if 'description' in component else '',
+                'start': parse(component['dtstart'].to_ical().decode('utf-8')),
+                'end': parse(component['dtend'].to_ical().decode('utf-8')) if 'dtend' in component else parse(component['dtstart'].to_ical().decode('utf-8')),
+                'attendees': attendees,
                 }
             if 'organizer' in component:
                 event['organizer'] = component.get('organizer').to_ical().decode('utf-8')
 
             if 'rrule' in component:
-                assert len(component['rrule']['freq']) == 1, 'An rrule should only have 1 freq argument'
-                assert len(component['rrule']['count']) == 1, 'An rrule must have a count argument'
-                assert len(component['rrule'].get('interval', [])) <= 1, 'An rrule should only have 1 interval argument'
+                if not isinstance(component['rrule']['freq'], str) and len(component['rrule']['freq']) != 1:
+                    print('An rrule should only have 1 freq argument', component.to_ical())
+                    break
 
                 rrule_inst = component['rrule']
                 rrule_inst['freq'] = rrule_freq.get(rrule_inst['freq'][0])
@@ -57,17 +79,38 @@ def convert(calendar_url, output_format):
 
                 rrule_inst = {k.lower(): rrule_inst[k] for k in rrule_inst}
                 for k in rrule_inst:
-                    if k in ('count', 'interval'):
+                    if k in ('count', 'interval', 'until', 'wkst'):
                         rrule_inst[k] = rrule_inst[k][0]
+
+                        if isinstance(rrule_inst[k], datetime):
+                            rrule_inst[k] = rrule_inst[k].replace(tzinfo=None)
+                        if k == 'wkst':
+                            rrule_inst[k] = rrule_weekdays[rrule_inst[k]]
+
                     if k == 'byday':
-                        rrule_inst['byweekday'] = [vWeekday.week_days[i] for i in rrule_inst.pop(k)]
+                        rrule_inst['byweekday'] = rrule_inst.pop(k)
+                        new_byweeday = []
+                        for i in rrule_inst['byweekday']:
+                            if len(i) > 2:
+                                try:
+                                    i_int = int(i[:-2])
+                                except:
+                                    print('Not a valid rrule', rrule_inst)
+                                    break
+                                new_byweeday.append(rrule_weekdays[i[-2:]](i_int))
+                            else:
+                                new_byweeday.append(vWeekday.week_days[i])
+
+                        rrule_inst['byweekday'] = new_byweeday
+
 
                 for rrule_event_start in rrule(**rrule_inst):
-                    duration = event['end'] - event['start']
-                    rrule_event = copy(event)
-                    rrule_event['start'] = rrule_event_start
-                    rrule_event['end'] = rrule_event_start + duration
-                    events.append(rrule_event)
+                    if rrule_event_start < datetime.now():
+                        duration = event['end'] - event['start']
+                        rrule_event = copy(event)
+                        rrule_event['start'] = rrule_event_start
+                        rrule_event['end'] = rrule_event_start + duration
+                        events.append(rrule_event)
             else:
                 events.append(event)
 
