@@ -12,8 +12,8 @@ Converts ics links to newline-delimited json for upload into an analytics databa
 ### BigQuery
 
 1. Follow [Google's instructions](https://support.google.com/calendar/answer/37648?hl=en) for "See your calendar (view only)". If you're not able to do this and want this as a features, ping me [@ehfeng](https://twitter.com/ehfeng)
-2. `python main.py --calendar-url <GOOGLE CALENDAR SECRET ICAL URL> --json`
-3. Upload `calendar_events.json` as a table in BigQuery
+2. `python main.py --calendar-url <GOOGLE CALENDAR SECRET ICAL URL> --<json|sql>`
+3. Upload `calendar_events.json` as a table in BigQuery or `cat calendar_events.sql | psql <your database>`
 
 ## Notes
 
@@ -27,6 +27,9 @@ columns:
 
   created:
     type: timestamp
+
+  calendar:
+    type: string
 
   name:
     type: string

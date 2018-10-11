@@ -40,9 +40,10 @@ class BigQueryEncoder(json.JSONEncoder):
 
 @click.command()
 @click.option('--calendar-url', prompt='Calendar URL')
+@click.option('--calendar-name', prompt='Calendar Name')
 @click.option('--json', 'output_format', flag_value='json', default=True)
 @click.option('--sql', 'output_format', flag_value='sql')
-def convert(calendar_url, output_format):
+def convert(calendar_url, calendar_name, output_format):
     events = []
 
     calendar = Calendar.from_ical(requests.get(calendar_url).text)
@@ -61,6 +62,7 @@ def convert(calendar_url, output_format):
         if component.name == 'VEVENT':
             event = {
                 'id': component['uid'],
+                'calendar': calendar_name,
                 'name': component['summary'].to_ical().decode('utf-8'),
                 'created': parse((component['created'] or component['dtstart']).to_ical().decode('utf-8')),
                 'description': component['description'].to_ical().decode('utf-8') if 'description' in component else '',
@@ -68,8 +70,8 @@ def convert(calendar_url, output_format):
                 'end': parse(component['dtend'].to_ical().decode('utf-8')) if 'dtend' in component else parse(component['dtstart'].to_ical().decode('utf-8')),
                 'attendees': attendees,
                 }
-            if 'organizer' in component:
-                event['organizer'] = component.get('organizer').to_ical().decode('utf-8')
+            # if 'organizer' in component:
+            #     event['organizer'] = component.get('organizer').to_ical().decode('utf-8')
 
             if 'rrule' in component:
                 if not isinstance(component['rrule']['freq'], str) and len(component['rrule']['freq']) != 1:
@@ -106,7 +108,7 @@ def convert(calendar_url, output_format):
 
                         rrule_inst['byweekday'] = new_byweeday
 
-
+                rrule_inst['until'] = min(rrule_inst.get('until', datetime.now()), datetime.now())
                 for rrule_event_start in rrule(**rrule_inst):
                     if rrule_event_start < datetime.now():
                         duration = event['end'] - event['start']
@@ -122,6 +124,36 @@ def convert(calendar_url, output_format):
             for event in events:
                 f.write(json.dumps(event, cls=BigQueryEncoder))
                 f.write('\n')
+    elif output_format == 'sql':
+        with open('calendar_events.sql', 'w') as f:
+            column_names = events[0].keys()
+            column_names_str = ','.join(['"' + k + '"' for k in column_names])
+            values_list = []
+            for event in events:
+                values = []
+                for column_name in column_names:
+                    value = event.get(column_name)
+
+                    if not value:
+                        values.append('null')
+                    elif isinstance(value, str):
+                        value = value.replace("'", '"')
+                        value = value.replace("\\", '\\\\')
+                        value = value.encode('ascii','replace').decode('utf-8')
+                        values.append('E\'{}\''.format(value))
+                    elif isinstance(value, datetime):
+                        values.append('\'{}\'::timestamp'.format(value))
+                    elif isinstance(value, list):
+                        values.append('\'{{\"{}\"}}\''.format('\", \"'.join(value)))
+                    else:
+                        values.append(str(value))
+
+                values_list.append("(" + ','.join(values) + ")")
+
+            # f.write('create schema if not exists google_calendar;\n')
+            # f.write('drop table google_calendar.events;\n')
+            # f.write('create table if not exists google_calendar.events ( id text, calendar text, created timestamp, name text, description text, attendees text[], all_day bool, start timestamp, "end" timestamp, timezone text);\n')
+            f.write('insert into google_calendar.events ({}) values \n{};'.format(column_names_str, ',\n'.join(values_list)))
 
 
 if __name__ == '__main__':
